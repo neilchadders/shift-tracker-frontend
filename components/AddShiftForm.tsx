@@ -23,18 +23,20 @@ export default function AddShiftForm({
 
   // Populate form when editing
   useEffect(() => {
-    if (initialData) {
-      setDate(initialData.date);
-      setStartTime(initialData.startTime);
-      setEndTime(initialData.endTime);
-      setHourlyRate(initialData.hourlyRate.toString());
-    } else {
-      setDate("");
-      setStartTime("");
-      setEndTime("");
-      setHourlyRate("");
-    }
-  }, [initialData]);
+  if (initialData) {
+    // Ensure correct formats for inputs
+    setDate(initialData.date.split("T")[0]); // YYYY-MM-DD
+    setStartTime(initialData.startTime.substring(11, 16)); // HH:mm
+    setEndTime(initialData.endTime.substring(11, 16)); // HH:mm
+    setHourlyRate(initialData.hourlyRate.toString());
+  } else {
+    setDate("");
+    setStartTime("");
+    setEndTime("");
+    setHourlyRate("");
+  }
+}, [initialData]);
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
