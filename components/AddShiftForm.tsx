@@ -1,25 +1,23 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Shift } from "../types/shifts";
+import { ShiftDto, ShiftInput } from "../types/shifts";
 
 interface AddShiftFormProps {
-  onShiftAdded: (shift: Shift) => void;
-  initialData?: Shift;
+  onShiftAdded: (shift: ShiftDto) => void;
+  initialData?: ShiftDto;
   isEditing?: boolean;
   onCancelEdit?: () => void;
 }
 
 // ---------- helpers ----------
 function toDateInput(value: string) {
-  // Handles "YYYY-MM-DD", "YYYY-MM-DDTHH:mm:ss", etc.
   if (!value) return "";
   const m = value.match(/^(\d{4}-\d{2}-\d{2})/);
   return m ? m[1] : "";
 }
 
 function toTimeInput(value: string) {
-  // Accepts "HH:mm", "HH:mm:ss", or "PT1H30M" (ISO duration) -> "HH:mm"
   if (!value) return "";
   if (value.startsWith("P")) {
     const h = /(\d+)H/.exec(value)?.[1] ?? "0";
@@ -31,9 +29,13 @@ function toTimeInput(value: string) {
 }
 
 function toApiTime(hhmm: string) {
-  // Ensure "HH:mm:ss" for TimeSpan model binding
   if (!hhmm) return "";
   return hhmm.length === 5 ? `${hhmm}:00` : hhmm;
+}
+
+function getErrorMessage(e: unknown) {
+  if (e instanceof Error) return e.message;
+  try { return JSON.stringify(e); } catch { return String(e); }
 }
 
 export default function AddShiftForm({
@@ -45,7 +47,7 @@ export default function AddShiftForm({
   const [date, setDate] = useState("");
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
-  const [hourlyRate, setHourlyRate] = useState("");
+  const [hourlyRate, setHourlyRate] = useState(""); // blank => monthly default
   const [submitting, setSubmitting] = useState(false);
 
   // Prefill when editing
@@ -54,7 +56,11 @@ export default function AddShiftForm({
       setDate(toDateInput(initialData.date));
       setStartTime(toTimeInput(initialData.startTime));
       setEndTime(toTimeInput(initialData.endTime));
-      setHourlyRate(initialData.hourlyRate?.toString() ?? "");
+      setHourlyRate(
+        initialData.hourlyRate === null || initialData.hourlyRate === undefined
+          ? ""
+          : String(initialData.hourlyRate)
+      );
     } else {
       setDate("");
       setStartTime("");
@@ -70,22 +76,31 @@ export default function AddShiftForm({
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Invalid date");
       if (!/^\d{2}:\d{2}(:\d{2})?$/.test(startTime)) throw new Error("Invalid start time");
       if (!/^\d{2}:\d{2}(:\d{2})?$/.test(endTime)) throw new Error("Invalid end time");
-      if (!hourlyRate || Number.isNaN(parseFloat(hourlyRate))) throw new Error("Invalid hourly rate");
+
+      // Allow blank => null to use monthly default
+      const parsedRate: number | null =
+        hourlyRate.trim() === "" ? null : Number.parseFloat(hourlyRate);
+
+      if (parsedRate !== null && (Number.isNaN(parsedRate) || parsedRate < 1 || parsedRate > 1000)) {
+        throw new Error("Hourly rate must be between 1 and 1000 (or leave blank for monthly default)");
+      }
 
       setSubmitting(true);
 
-      const payload: Shift = {
-        id: initialData?.id || 0,
-        date: `${date}T00:00:00`,        // anchor at midnight
-        startTime: toApiTime(startTime), // "HH:mm:ss" for TimeSpan
-        endTime: toApiTime(endTime),     // "HH:mm:ss" for TimeSpan
-        hourlyRate: parseFloat(hourlyRate),
+      const payload: ShiftInput = {
+        ...(isEditing && initialData?.id ? { id: initialData.id } : {}),
+        date: `${date}T00:00:00`,
+        startTime: toApiTime(startTime),
+        endTime: toApiTime(endTime),
+        hourlyRate: parsedRate,
+        // isCompleted: initialData?.isCompleted ?? false, // include if you want PUT to preserve
       };
 
       const method = isEditing ? "PUT" : "POST";
-      const url = isEditing
-        ? `http://localhost:5137/shifts/${payload.id}`
-        : "http://localhost:5137/shifts";
+      const url =
+        isEditing && initialData?.id
+          ? `http://localhost:5137/shifts/${initialData.id}`
+          : "http://localhost:5137/shifts";
 
       const res = await fetch(url, {
         method,
@@ -101,22 +116,16 @@ export default function AddShiftForm({
         );
       }
 
-      const savedShift = await res.json();
+      const savedShift: ShiftDto = await res.json();
       onShiftAdded(savedShift);
 
-      // If we were editing, go back to add mode
       if (isEditing && onCancelEdit) onCancelEdit();
-
-      // If adding, reset the form
       if (!isEditing) {
-        setDate("");
-        setStartTime("");
-        setEndTime("");
-        setHourlyRate("");
+        setDate(""); setStartTime(""); setEndTime(""); setHourlyRate("");
       }
-    } catch (err: any) {
-      console.error(err);
-      alert(err?.message ?? "Something went wrong");
+    } catch (e: unknown) {
+      console.error(e);
+      alert(getErrorMessage(e));
     } finally {
       setSubmitting(false);
     }
@@ -148,14 +157,13 @@ export default function AddShiftForm({
       <input
         type="number"
         step="0.01"
-        min="0"
+        min="1"
+        max="1000"
         value={hourlyRate}
         onChange={(e) => setHourlyRate(e.target.value)}
-        required
-        placeholder="Hourly rate"
+        placeholder="Hourly rate (blank = monthly default)"
         className="border rounded px-2 py-1 w-full"
       />
-
       <div className="flex space-x-2">
         <button
           type="submit"
